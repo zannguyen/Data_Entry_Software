@@ -323,6 +323,12 @@ class LineToEnter:
     # đúng số này, bất kể dòng gốc là 8% hay 10% — vì PDF đã tính đúng theo thuế
     # suất thật của dòng đó rồi, ghi đè y nguyên là đủ, không cần phân biệt %.
     tien_thue_dong: float = 0.0
+    # Thành tiền trước thuế THẬT của dòng, lấy nguyên từ PDF — XÁC NHẬN THEO YÊU CẦU
+    # NGƯỜI DÙNG (30/08/2026): gõ TRỰC TIẾP cột "Thành tiền" thay vì gõ "Đơn giá" rồi để
+    # MISA tự nhân Số lượng × Đơn giá, để tránh lệch làm tròn (VD PDF Đơn giá đã làm
+    # tròn 17.593 từ 17.592,5, nhân lại SL×ĐG có thể ra khác 1 đồng so với Thành tiền
+    # PDF thật ghi). Gõ thẳng đúng số PDF vào Thành tiền loại bỏ hoàn toàn rủi ro này.
+    thanh_tien_truoc_thue: float = 0.0
 
 
 @dataclass
@@ -531,9 +537,9 @@ class MisaAutomation:
             log.info("  Ngày = %s", inv.ngay)
             for line in inv.lines:
                 log.info(
-                    "  Dòng hàng: gõ tên '%s' vào Mã hàng (MISA tự tra cứu) | SL=%s DG=%s | "
-                    "%%VAT=%s (cố định) | TienThue ghi đè=%s",
-                    line.ma_hang, line.so_luong, line.don_gia,
+                    "  Dòng hàng: gõ tên '%s' vào Mã hàng (MISA tự tra cứu) | SL=%s "
+                    "ThànhTiền(gõ thẳng)=%s | %%VAT=%s (cố định) | TienThue ghi đè=%s",
+                    line.ma_hang, line.so_luong, f"{line.thanh_tien_truoc_thue:,.0f}",
                     FIXED_VAT_PERCENT_LABEL, f"{line.tien_thue_dong:,.0f}",
                 )
             log.info(
@@ -583,7 +589,12 @@ class MisaAutomation:
         # cột" ở bước set thuế vì chưa từng chuyển tab).
         grid = _child(popup, Controls.GRID_HANG_TIEN_AUTO_ID, "Custom")
 
-        # ---- Vòng 1: tab "1. Hàng tiền" — Mã hàng (tra cứu), Số lượng, Đơn giá ----
+        # ---- Vòng 1: tab "1. Hàng tiền" — Mã hàng (tra cứu), Số lượng, Thành tiền ----
+        # THEO YÊU CẦU NGƯỜI DÙNG (30/08/2026): gõ thẳng "Thành tiền" (số PDF thật, chính
+        # xác tuyệt đối) thay vì gõ "Đơn giá" rồi để MISA tự nhân Số lượng × Đơn giá —
+        # tránh lệch làm tròn giữa Đơn giá (đã làm tròn trên PDF) nhân ngược lại. Gõ SỐ
+        # LƯỢNG trước, THÀNH TIỀN sau (ghi đè lại bất kỳ giá trị MISA tự tính ra sau khi
+        # nhận Số lượng), để giá trị cuối cùng còn lại đúng là Thành tiền thật.
         _click_element_center(_child(popup, Controls.TAB_HANG_TIEN_AUTO_ID, "TabItem"))
         time.sleep(0.5)
         ten_hang_misa_list = []
@@ -592,10 +603,12 @@ class MisaAutomation:
             ten_hang_misa_list.append(ten_hang_misa)
             time.sleep(0.4)  # đợi MISA điền xong các cột tự động khác trước khi chạm SL
             self._grid_set_cell(grid, row_idx, Controls.GRID_COL_SO_LUONG, _format_vn_number(line.so_luong))
-            self._grid_set_cell(grid, row_idx, Controls.GRID_COL_DON_GIA, _format_vn_number(line.don_gia))
+            self._grid_set_cell(
+                grid, row_idx, Controls.GRID_COL_THANH_TIEN, _format_vn_number(line.thanh_tien_truoc_thue)
+            )
             log.info(
-                "Dòng %d: PDF='%s' -> MISA tra cứu ra='%s' | SL=%s DG=%s",
-                row_idx, line.ma_hang, ten_hang_misa, line.so_luong, line.don_gia,
+                "Dòng %d: PDF='%s' -> MISA tra cứu ra='%s' | SL=%s ThànhTiền=%s",
+                row_idx, line.ma_hang, ten_hang_misa, line.so_luong, line.thanh_tien_truoc_thue,
             )
 
         # ---- Vòng 2: tab "2. Thuế" — %VAT (luôn 10%) + Tiền thuế GTGT ghi đè theo dòng ----

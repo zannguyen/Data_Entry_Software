@@ -59,7 +59,7 @@ def to_entry_payload(inv: Invoice, matcher: ProductMatcher):
     lines = [
         LineToEnter(
             ma_hang=l.ten_hang, so_luong=l.so_luong, don_gia=l.don_gia,
-            tien_thue_dong=l.tien_thue,
+            tien_thue_dong=l.tien_thue, thanh_tien_truoc_thue=l.thanh_tien_truoc_thue,
         )
         for l in inv.lines
     ]

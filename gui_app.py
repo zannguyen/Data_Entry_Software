@@ -784,6 +784,7 @@ class App(tk.Tk):
                 LineToEnter(
                     ma_hang=row.overrides.get(i, l.ten_hang),  # text để MISA tra cứu (tên hàng PDF, hoặc override tay)
                     so_luong=l.so_luong, don_gia=l.don_gia, tien_thue_dong=l.tien_thue,
+                    thanh_tien_truoc_thue=l.thanh_tien_truoc_thue,
                 )
                 for i, l in enumerate(inv.lines)
             ]
