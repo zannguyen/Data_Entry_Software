@@ -505,6 +505,7 @@ class MisaAutomation:
         for row_idx, line in enumerate(inv.lines):
             ten_hang_misa = self._grid_search_ma_hang(grid, row_idx, line.ma_hang)
             ten_hang_misa_list.append(ten_hang_misa)
+            time.sleep(0.4)  # đợi MISA điền xong các cột tự động khác trước khi chạm SL
             self._grid_set_cell(grid, row_idx, Controls.GRID_COL_SO_LUONG, _format_vn_number(line.so_luong))
             self._grid_set_cell(grid, row_idx, Controls.GRID_COL_DON_GIA, _format_vn_number(line.don_gia))
             log.info(
@@ -671,6 +672,14 @@ class MisaAutomation:
         self.main_win.set_focus()
         cell = self._grid_cell(grid, row, col_title)
         edit_area = self._cell_edit_area(cell)
+        if edit_area is None:
+            # XÁC NHẬN THẬT (30/08/2026, gặp trên máy khác): ngay sau khi vừa chốt Mã
+            # hàng, MISA có thể còn đang tự điền các cột khác (ĐVT/TK...) trong giây lát
+            # -- ô "Số lượng"/"Đơn giá" cạnh đó chưa kịp render Edit Area. Thay vì báo
+            # lỗi ngay, đợi thêm rồi đọc lại ô 1 lần nữa trước khi thật sự báo lỗi.
+            time.sleep(0.6)
+            cell = self._grid_cell(grid, row, col_title)
+            edit_area = self._cell_edit_area(cell)
         if edit_area is None:
             raise LookupError(f"Không tìm thấy Edit Area trong ô '{col_title}' dòng {row}.")
         _click_element_center(edit_area)

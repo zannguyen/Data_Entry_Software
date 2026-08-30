@@ -58,6 +58,7 @@ _set_dpi_aware()
 import glob
 import json
 import threading
+import traceback
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from pathlib import Path
@@ -735,7 +736,7 @@ class App(tk.Tk):
                 automation.connect()
                 automation.ensure_ban_hang_list_open()
             except Exception as e:
-                self._log(f"LỖI kết nối/điều hướng MISA: {e}")
+                self._log(f"LỖI kết nối/điều hướng MISA ({type(e).__name__}):\n" + traceback.format_exc())
                 return
 
         # ---- Từ 29/08/2026: quyết định mã hàng chuyển sang tra cứu TRỰC TIẾP trong
@@ -809,7 +810,14 @@ class App(tk.Tk):
             except Exception as e:
                 row.status = "loi"
                 row.error_msg = str(e)
-                self._log(f"LỖI khi nhập hóa đơn {inv.so_hoa_don}: {e}")
+                # Ghi ĐẦY ĐỦ traceback (không chỉ str(e)) — XÁC NHẬN THẬT (30/08/2026):
+                # nhiều lần chẩn đoán lỗi bị chậm vì chỉ có thông báo lỗi ngắn gọn, thiếu
+                # tên loại exception + dòng code gây lỗi, phải hỏi lại người dùng nhiều
+                # lần mới xác định được nguyên nhân thật. Từ giờ log tự đủ chi tiết.
+                self._log(
+                    f"LỖI khi nhập hóa đơn {inv.so_hoa_don} ({type(e).__name__}):\n"
+                    + traceback.format_exc()
+                )
                 automation.close_popup_if_open(popup)
                 self.after(0, self._refresh_tree)
                 if not dry_run:
