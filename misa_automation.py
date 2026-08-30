@@ -690,6 +690,21 @@ class MisaAutomation:
         """
         a = _normalize(ten_hang_pdf)
         b = _normalize(ten_hang_misa)
+
+        # XÁC NHẬN THẬT (30/08/2026, đọc danh mục thật 1 công ty khác — gần như TOÀN BỘ
+        # sản phẩm chỉ khác nhau đúng hậu tố size, VD "...-Size M" / "...-Size L" /
+        # "...-Size XL"): 2 tên chỉ lệch đúng chữ size cuối cùng vẫn giống nhau ~90-95%
+        # theo fuzz.ratio (vì chỉ khác 1 ký tự trong chuỗi dài) — ĐỦ để vượt ngưỡng tin
+        # cậy 92 một cách SAI, chọn nhầm size (khác giá tiền hẳn). Chặn cứng: nếu CẢ HAI
+        # tên (sau chuẩn hoá) đều kết thúc bằng 1 từ size (S/M/L/XL/XXL) và 2 từ đó KHÁC
+        # NHAU -> coi là sai chắc chắn (0 điểm), bất kể phần còn lại giống nhau bao
+        # nhiêu. Không cần biết trước danh sách size cụ thể của từng công ty — tự suy ra
+        # từ đúng vị trí (từ cuối cùng của tên).
+        size_a = MisaAutomation._trailing_size_token(a)
+        size_b = MisaAutomation._trailing_size_token(b)
+        if size_a and size_b and size_a != size_b:
+            return 0.0
+
         if a and b and (b.startswith(a) or a.startswith(b)):
             return 100.0
         a_acronym = MisaAutomation._acronym_expand(a, b)
@@ -712,6 +727,15 @@ class MisaAutomation:
         if a_acronym != a:
             scores.append(fuzz.ratio(a_acronym, b))
         return float(max(scores))
+
+    @staticmethod
+    def _trailing_size_token(normalized: str) -> Optional[str]:
+        """Trả về từ size (s/m/l/xl/xxl) nếu đó là TỪ CUỐI CÙNG của tên đã chuẩn hoá,
+        ngược lại trả None. Xem _name_match_score() để biết lý do cần hàm này."""
+        parts = normalized.split()
+        if parts and parts[-1] in {"s", "m", "l", "xl", "xxl"}:
+            return parts[-1]
+        return None
 
     @staticmethod
     def _strip_diacritics(s: str) -> str:
