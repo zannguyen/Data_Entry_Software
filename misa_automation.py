@@ -220,6 +220,26 @@ def _declare_user32_argtypes(user32) -> None:
     _user32_argtypes_declared = True
 
 
+def _child(parent, auto_id: str, control_type: str = None):
+    """
+    Tìm 1 phần tử con theo auto_id, quét qua parent.descendants() (parent phải là 1
+    ELEMENT CỤ THỂ đã resolve) rồi lọc tay theo automation_id — dùng THAY CHO
+    parent.child_window(auto_id=..., control_type=...) ở mọi nơi có `popup` làm parent.
+    XÁC NHẬN THẬT (30/08/2026, gặp trên máy khác): trên máy có 2 phần tử UIA cùng
+    auto_id="frmSAVoucherDetail" (xem open_new_invoice_popup()), gọi
+    popup.child_window(...) LUÔN ném ElementAmbiguousError khi WindowSpecification trả
+    về được resolve (lazy) sau đó — vì pywinauto TỰ TÌM LẠI TỪ ĐẦU theo auto_id của
+    popup lúc đó, KHÔNG dùng đúng instance popup cụ thể đã chọn trước đó. descendants()
+    gọi trực tiếp trên 1 element đã resolve thì không bị vậy (đã kiểm chứng: bước kiểm
+    tra "has_grid" trong open_new_invoice_popup() dùng đúng cách này chạy không lỗi).
+    """
+    kwargs = {"control_type": control_type} if control_type else {}
+    for c in parent.descendants(**kwargs):
+        if c.element_info.automation_id == auto_id:
+            return c
+    raise ElementNotFoundError(f"Không tìm thấy phần tử auto_id='{auto_id}' trong {parent}.")
+
+
 def _wait_element_visible(element, timeout: float = 10.0, poll: float = 0.2) -> None:
     """
     Đợi 1 element THẬT SỰ ĐÃ RESOLVE (UIAWrapper, lấy qua .descendants() — khác với
@@ -529,13 +549,13 @@ class MisaAutomation:
         time.sleep(0.2)
 
         # ---- Trạng thái: Chưa thu tiền ----
-        payment_combo = popup.child_window(auto_id=Controls.FIELD_PAYMENT_METHOD_COMBO, control_type="ComboBox")
-        _click_element_center(payment_combo.child_window(
-            auto_id=Controls.RADIO_CHUA_THU_TIEN_AUTO_ID, control_type="RadioButton"
-        ))
+        payment_combo = _child(popup, Controls.FIELD_PAYMENT_METHOD_COMBO, "ComboBox")
+        _click_element_center(
+            _child(payment_combo, Controls.RADIO_CHUA_THU_TIEN_AUTO_ID, "RadioButton")
+        )
 
         # ---- Khách hàng: luôn Khách lẻ ----
-        combo = popup.child_window(auto_id=Controls.FIELD_KHACH_HANG, control_type="ComboBox")
+        combo = _child(popup, Controls.FIELD_KHACH_HANG, "ComboBox")
         _click_element_center(combo)
         time.sleep(0.3)
         send_keys(KHACH_LE_NAME, pause=0.03, with_spaces=True)
@@ -546,7 +566,7 @@ class MisaAutomation:
         # ---- Ngày hạch toán ----
         # XÁC NHẬN THẬT (người dùng, 29/08/2026): chỉ cần nhập "Ngày hạch toán" rồi Tab
         # -> MISA TỰ ĐỘNG điền "Ngày chứng từ" giống theo, không cần nhập tay ô đó nữa.
-        date_ctrl = popup.child_window(auto_id=Controls.FIELD_NGAY_HACH_TOAN, control_type="Edit")
+        date_ctrl = _child(popup, Controls.FIELD_NGAY_HACH_TOAN, "Edit")
         _click_element_center(date_ctrl)
         time.sleep(0.2)
         send_keys("^a{DELETE}")
@@ -561,12 +581,10 @@ class MisaAutomation:
         # xác nhận thật khi dò control). Vì vậy tách 2 vòng lặp theo 2 tab, KHÔNG gộp
         # chung 1 vòng như trước (bug thật đã tồn tại, có thể gây lỗi "không tìm thấy
         # cột" ở bước set thuế vì chưa từng chuyển tab).
-        grid = popup.child_window(auto_id=Controls.GRID_HANG_TIEN_AUTO_ID, control_type="Custom")
+        grid = _child(popup, Controls.GRID_HANG_TIEN_AUTO_ID, "Custom")
 
         # ---- Vòng 1: tab "1. Hàng tiền" — Mã hàng (tra cứu), Số lượng, Đơn giá ----
-        _click_element_center(
-            popup.child_window(auto_id=Controls.TAB_HANG_TIEN_AUTO_ID, control_type="TabItem")
-        )
+        _click_element_center(_child(popup, Controls.TAB_HANG_TIEN_AUTO_ID, "TabItem"))
         time.sleep(0.5)
         ten_hang_misa_list = []
         for row_idx, line in enumerate(inv.lines):
@@ -581,9 +599,7 @@ class MisaAutomation:
             )
 
         # ---- Vòng 2: tab "2. Thuế" — %VAT (luôn 10%) + Tiền thuế GTGT ghi đè theo dòng ----
-        _click_element_center(
-            popup.child_window(auto_id=Controls.TAB_THUE_AUTO_ID, control_type="TabItem")
-        )
+        _click_element_center(_child(popup, Controls.TAB_THUE_AUTO_ID, "TabItem"))
         time.sleep(0.5)
         for row_idx, line in enumerate(inv.lines):
             self._grid_set_cell_dropdown(grid, row_idx, Controls.GRID_COL_THUE_SUAT_PCT, "10%")
@@ -595,7 +611,7 @@ class MisaAutomation:
         # ---- Ô tổng cuối form (creTotalVATAmountOC) ----
         # CHƯA XÁC MINH: nếu MISA tự cộng dồn Tiền thuế GTGT từ các dòng ở trên thì ô
         # tổng này có thể đã tự đúng — set tay ở đây để an toàn, có thể là thao tác thừa.
-        tien_thue_ctrl = popup.child_window(auto_id=Controls.FIELD_TONG_TIEN_THUE, control_type="Edit")
+        tien_thue_ctrl = _child(popup, Controls.FIELD_TONG_TIEN_THUE, "Edit")
         _click_element_center(tien_thue_ctrl)
         time.sleep(0.2)
         send_keys("^a{DELETE}")
@@ -607,11 +623,9 @@ class MisaAutomation:
         # "Hóa đơn" (nhóm tab trên cùng, khác nhóm "1. Hàng tiền/2. Thuế" ở dưới), đọc
         # "Số hóa đơn" (txtInvNo) — nếu đã khớp inv.so_hoa_don_goc thì giữ nguyên, nếu
         # không thì xoá và gõ lại đúng số thật.
-        _click_element_center(
-            popup.child_window(auto_id=Controls.TAB_HOA_DON_AUTO_ID, control_type="TabItem")
-        )
+        _click_element_center(_child(popup, Controls.TAB_HOA_DON_AUTO_ID, "TabItem"))
         time.sleep(0.5)
-        so_hd_ctrl = popup.child_window(auto_id=Controls.FIELD_SO_HOA_DON_THAT, control_type="Edit")
+        so_hd_ctrl = _child(popup, Controls.FIELD_SO_HOA_DON_THAT, "Edit")
         so_hd_edit_area = self._cell_edit_area(so_hd_ctrl)
         current_value = (
             so_hd_edit_area.legacy_properties().get("Value", "") if so_hd_edit_area is not None else ""
@@ -1083,9 +1097,7 @@ class MisaAutomation:
             raise NotImplementedError(
                 "Chưa dò auto_id nút 'Cất' trong popup — không tự ý đoán để tránh bấm nhầm."
             )
-        _click_element_center(
-            popup.child_window(auto_id=Controls.POPUP_BTN_CAT_AUTO_ID, control_type="Button")
-        )
+        _click_element_center(_child(popup, Controls.POPUP_BTN_CAT_AUTO_ID, "Button"))
         time.sleep(1.0)  # chờ MISA xử lý lưu + validate nội bộ
 
         # ---- Xử lý hộp thoại cảnh báo chênh lệch thuế suất (nếu có) ----
@@ -1120,9 +1132,7 @@ class MisaAutomation:
         # tab mở khi chạy hàng loạt (mỗi "Thêm" mở 1 tab MDI nội bộ mới, không tự đóng).
         time.sleep(7.0)
         try:
-            _click_element_center(
-                popup.child_window(auto_id=Controls.POPUP_BTN_DONG_AUTO_ID, control_type="Button")
-            )
+            _click_element_center(_child(popup, Controls.POPUP_BTN_DONG_AUTO_ID, "Button"))
             time.sleep(1.0)
         except Exception as e:
             log.warning("Không đóng được tab hóa đơn vừa Cất (%s) — vẫn tiếp tục, có thể còn tab thừa.", e)
@@ -1204,9 +1214,7 @@ class MisaAutomation:
         if self.dry_run or popup is None:
             return True
         try:
-            _click_element_center(
-                popup.child_window(auto_id=Controls.POPUP_BTN_DONG_AUTO_ID, control_type="Button")
-            )
+            _click_element_center(_child(popup, Controls.POPUP_BTN_DONG_AUTO_ID, "Button"))
             time.sleep(1.0)
             dialog_hwnd = self._find_window_by_exact_title("MISA SME.NET 2019", timeout=3.0)
             if dialog_hwnd:
