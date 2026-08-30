@@ -220,6 +220,24 @@ def _declare_user32_argtypes(user32) -> None:
     _user32_argtypes_declared = True
 
 
+def _wait_element_visible(element, timeout: float = 10.0, poll: float = 0.2) -> None:
+    """
+    Đợi 1 element THẬT SỰ ĐÃ RESOLVE (UIAWrapper, lấy qua .descendants() — khác với
+    WindowSpecification "lười" lấy qua .child_window(), vốn có sẵn .wait()) trở nên
+    visible. XÁC NHẬN THẬT (30/08/2026, gặp trên máy khác): gọi `.wait("visible", ...)`
+    trên 1 UIAWrapper đã resolve bị lỗi `AttributeError: 'UIAWrapper' object has no
+    attribute 'wait'` — đó là API của WindowSpecification, không có trên UIAWrapper.
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if element.is_visible():
+                return
+        except Exception:
+            pass
+        time.sleep(poll)
+
+
 def _raw_click(x: int, y: int):
     """
     Click chuột THẲNG qua Windows API (SetCursorPos + mouse_event), KHÔNG dùng
@@ -414,7 +432,7 @@ class MisaAutomation:
                 len(candidates),
             )
         popup = candidates[-1]
-        popup.wait("visible", timeout=10)
+        _wait_element_visible(popup)
 
         # Kiểm tra an toàn: phần tử chọn phải CHỨA được grid "Hàng tiền" bên trong (dấu
         # hiệu đây đúng là khung tương tác thật) — nếu không, thử lại phần tử còn lại
@@ -430,7 +448,7 @@ class MisaAutomation:
             if not has_grid:
                 log.info("Phần tử cuối danh sách không thấy grid Hàng tiền -> thử phần tử đầu danh sách thay thế.")
                 popup = candidates[0]
-                popup.wait("visible", timeout=10)
+                _wait_element_visible(popup)
 
         return popup
 
