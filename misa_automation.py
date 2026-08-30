@@ -188,6 +188,38 @@ def _format_vn_number(value: float) -> str:
     return f"{int_part.replace(',', '.')},{dec_part}"
 
 
+_user32_argtypes_declared = False
+
+
+def _declare_user32_argtypes(user32) -> None:
+    """
+    Khai báo đúng kiểu tham số (argtypes/restype) cho các hàm user32 dùng trong
+    EnumWindows — XÁC NHẬN THẬT (30/08/2026, gặp trên 1 máy khác): thiếu khai báo này,
+    ctypes tự đoán kiểu tham số mặc định (thường là c_int 32-bit) cho `hwnd`, và
+    `GetWindowTextLengthW`/`IsWindowVisible`/`GetWindowTextW`/`GetWindowRect` bị lỗi
+    `ArgumentError: argument 1: OverflowError: int too long to convert` khi hwnd thật
+    trên máy đó lớn hơn phạm vi 32-bit (giá trị handle phụ thuộc máy/phiên làm việc,
+    không phải lúc nào cũng xảy ra — máy build công cụ này không gặp, máy khác thì có).
+    Sửa: khai báo tường minh mọi tham số hwnd là `wintypes.HWND` (đúng kích thước con
+    trỏ 64-bit). Chỉ cần khai báo 1 lần cho cả tiến trình (idempotent).
+    """
+    global _user32_argtypes_declared
+    if _user32_argtypes_declared:
+        return
+    import ctypes
+    from ctypes import wintypes
+
+    user32.GetWindowTextLengthW.argtypes = [wintypes.HWND]
+    user32.GetWindowTextLengthW.restype = ctypes.c_int
+    user32.IsWindowVisible.argtypes = [wintypes.HWND]
+    user32.IsWindowVisible.restype = wintypes.BOOL
+    user32.GetWindowTextW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    user32.GetWindowTextW.restype = ctypes.c_int
+    user32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    _user32_argtypes_declared = True
+
+
 def _raw_click(x: int, y: int):
     """
     Click chuột THẲNG qua Windows API (SetCursorPos + mouse_event), KHÔNG dùng
@@ -286,6 +318,7 @@ class MisaAutomation:
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
+        _declare_user32_argtypes(user32)
         results = []
 
         def foreach_window(hwnd, _lparam):
@@ -1032,6 +1065,7 @@ class MisaAutomation:
         from ctypes import wintypes
 
         user32 = ctypes.windll.user32
+        _declare_user32_argtypes(user32)
         deadline = time.time() + timeout
         while time.time() < deadline:
             found = []
