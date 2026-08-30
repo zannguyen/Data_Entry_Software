@@ -393,9 +393,13 @@ class MisaAutomation:
         # descendants(), lấy phần tử CUỐI DANH SÁCH — theo thứ tự duyệt cây UIA (depth-
         # first), phần tử lồng SÂU HƠN (khung nhúng bên trong, cụ thể/tương tác thật hơn)
         # sẽ đứng SAU khung ngoài bao nó, nên đây là lựa chọn hợp lý nhất.
-        candidates = self.main_win.descendants(
-            auto_id=Controls.POPUP_DETAIL_AUTO_ID, control_type="Window"
-        )
+        # descendants() (mức element_info) KHÔNG hỗ trợ lọc theo auto_id như
+        # child_window() -- chỉ nhận control_type -- nên phải tự lọc lại theo
+        # automation_id bằng tay.
+        candidates = [
+            w for w in self.main_win.descendants(control_type="Window")
+            if w.element_info.automation_id == Controls.POPUP_DETAIL_AUTO_ID
+        ]
         if not candidates:
             popup = self.main_win.child_window(
                 auto_id=Controls.POPUP_DETAIL_AUTO_ID, control_type="Window"
@@ -417,9 +421,10 @@ class MisaAutomation:
         # trước khi chấp nhận (phòng trường hợp suy đoán thứ tự ở trên bị sai).
         if len(candidates) > 1:
             try:
-                has_grid = len(popup.descendants(
-                    auto_id=Controls.GRID_HANG_TIEN_AUTO_ID, control_type="Custom"
-                )) > 0
+                has_grid = any(
+                    c.element_info.automation_id == Controls.GRID_HANG_TIEN_AUTO_ID
+                    for c in popup.descendants(control_type="Custom")
+                )
             except Exception:
                 has_grid = False
             if not has_grid:
