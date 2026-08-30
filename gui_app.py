@@ -57,6 +57,7 @@ _set_dpi_aware()
 
 import glob
 import json
+import logging
 import threading
 import traceback
 import tkinter as tk
@@ -143,6 +144,14 @@ from product_matcher import ProductMatcher, build_sample_matcher, MatchResult
 from misa_automation import (
     MisaAutomation, InvoiceToEnter, LineToEnter, LowConfidenceMatchError,
 )
+
+# XÁC NHẬN THẬT (30/08/2026): App._log() TRƯỚC ĐÂY chỉ ghi vào khung Log trong cửa sổ
+# ứng dụng — KHÔNG hề in ra console/terminal. Console chỉ thấy log của misa_automation.py
+# (qua logging module) -- 2 nơi khác nhau. Hệ quả: nhiều lần chẩn đoán lỗi bị bế tắc vì
+# người dùng luôn copy nhầm từ console, nơi KHÔNG BAO GIỜ có dòng "LỖI khi nhập hóa đơn
+# ..." (dòng đó chỉ ghi trong app). Sửa: App._log() giờ ghi ĐỒNG THỜI vào cả 2 nơi, dùng
+# lại đúng logger "misa_rpa" (đã cấu hình sẵn định dạng/timestamp khi import misa_automation).
+_console_log = logging.getLogger("misa_rpa")
 
 
 class SimplePathPicker(tk.Toplevel):
@@ -445,6 +454,7 @@ class App(tk.Tk):
         self.log_text.insert("end", msg + "\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+        _console_log.info(msg)
 
     def _choose_pdf_file(self):
         cur = self.pdf_dir.get().strip()
