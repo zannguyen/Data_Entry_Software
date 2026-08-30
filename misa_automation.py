@@ -378,11 +378,55 @@ class MisaAutomation:
         _click_element_center(self.main_win.child_window(
             auto_id=Controls.TOOLBAR_BTN_THEM_AUTO_ID, control_type="Button"
         ))
+        time.sleep(0.5)
 
-        popup = self.main_win.child_window(
+        # XÁC NHẬN THẬT (30/08/2026, gặp trên máy khác — người dùng xác nhận trực tiếp
+        # trên màn hình: CHỈ có đúng 1 tab "Chứng từ bán hàng" đang mở, không phải nhiều
+        # tab thừa từ lần lỗi trước như nghi ngờ ban đầu): trên máy đó, cấu trúc cây UIA
+        # của MISA lộ ra HAI phần tử "Window" cùng auto_id="frmSAVoucherDetail" cho ĐÚNG
+        # 1 tab "Chứng từ bán hàng" (nhiều khả năng 1 khung ngoài (container) + 1 khung
+        # nhúng bên trong nó, cùng mang auto_id giống nhau — đặc điểm dựng UI của bản
+        # MISA/độ phân giải trên máy đó, KHÔNG xảy ra trên máy build công cụ này, nơi
+        # child_window() luôn khớp đúng 1 phần tử duy nhất). child_window() (đòi hỏi khớp
+        # DUY NHẤT) ném ElementAmbiguousError ngay khi có ≥2 phần tử khớp, dừng cả vòng
+        # lặp dù dữ liệu vẫn đang được nhập đúng. Sửa: liệt kê TẤT CẢ phần tử khớp qua
+        # descendants(), lấy phần tử CUỐI DANH SÁCH — theo thứ tự duyệt cây UIA (depth-
+        # first), phần tử lồng SÂU HƠN (khung nhúng bên trong, cụ thể/tương tác thật hơn)
+        # sẽ đứng SAU khung ngoài bao nó, nên đây là lựa chọn hợp lý nhất.
+        candidates = self.main_win.descendants(
             auto_id=Controls.POPUP_DETAIL_AUTO_ID, control_type="Window"
         )
+        if not candidates:
+            popup = self.main_win.child_window(
+                auto_id=Controls.POPUP_DETAIL_AUTO_ID, control_type="Window"
+            )
+            popup.wait("visible", timeout=10)
+            return popup
+        if len(candidates) > 1:
+            log.info(
+                "Có %d phần tử UIA cùng khớp 'Chứng từ bán hàng' (đặc điểm dựng UI của "
+                "MISA trên máy này, không phải lỗi) -> tự dùng phần tử cuối danh sách "
+                "(khung nhúng bên trong, cụ thể hơn).",
+                len(candidates),
+            )
+        popup = candidates[-1]
         popup.wait("visible", timeout=10)
+
+        # Kiểm tra an toàn: phần tử chọn phải CHỨA được grid "Hàng tiền" bên trong (dấu
+        # hiệu đây đúng là khung tương tác thật) — nếu không, thử lại phần tử còn lại
+        # trước khi chấp nhận (phòng trường hợp suy đoán thứ tự ở trên bị sai).
+        if len(candidates) > 1:
+            try:
+                has_grid = len(popup.descendants(
+                    auto_id=Controls.GRID_HANG_TIEN_AUTO_ID, control_type="Custom"
+                )) > 0
+            except Exception:
+                has_grid = False
+            if not has_grid:
+                log.info("Phần tử cuối danh sách không thấy grid Hàng tiền -> thử phần tử đầu danh sách thay thế.")
+                popup = candidates[0]
+                popup.wait("visible", timeout=10)
+
         return popup
 
     # --------------------------------------------------------------- #
