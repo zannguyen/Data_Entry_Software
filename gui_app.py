@@ -322,6 +322,8 @@ class App(tk.Tk):
         self.matcher: ProductMatcher | None = None
         self.rows: list[InvoiceRow] = []
         self.selected_row: InvoiceRow | None = None
+        self.stop_requested = threading.Event()
+        self.floating_stop_win: tk.Toplevel | None = None
 
         self._build_top_bar()
         self._build_main_area()
@@ -370,7 +372,10 @@ class App(tk.Tk):
             anchor="w"
         )
         columns = ("so_hd", "ngay", "so_dong", "tong_tt", "trang_thai")
-        self.tree = ttk.Treeview(left, columns=columns, show="headings", height=22, selectmode="browse")
+        # selectmode="extended": cho chọn NHIỀU hóa đơn cùng lúc (giữ Ctrl/Shift) — dùng
+        # với nút "Đặt lại đã chọn -> Sẵn sàng" bên dưới để xử lý hàng loạt khi có nhiều
+        # hóa đơn "Cần duyệt tay" (VD 100-200 hóa đơn), không phải duyệt từng cái 1.
+        self.tree = ttk.Treeview(left, columns=columns, show="headings", height=22, selectmode="extended")
         for col, label, width in [
             ("so_hd", "Số HĐ", 90),
             ("ngay", "Ngày", 90),
@@ -382,18 +387,38 @@ class App(tk.Tk):
             self.tree.column(col, width=width, anchor="center" if col != "tong_tt" else "e")
         self.tree.pack(fill="both", expand=True, pady=4)
         self.tree.bind("<<TreeviewSelect>>", self._on_select_invoice)
+        self.tree.bind("<Double-1>", self._on_tree_double_click)
+        ttk.Label(
+            left, text="Mẹo: bấm đúp vào cột Trạng thái của 1 hóa đơn để chuyển nhanh -> Sẵn sàng.",
+            foreground="#555",
+        ).pack(anchor="w")
 
         btns = ttk.Frame(left)
         btns.pack(fill="x", pady=4)
-        ttk.Button(btns, text="Dry-run tất cả (an toàn)", command=lambda: self._run_all(dry_run=True)).pack(
-            side="left"
+        self.btn_dry_run = ttk.Button(
+            btns, text="Dry-run tất cả (an toàn)", command=lambda: self._run_all(dry_run=True)
         )
-        ttk.Button(
+        self.btn_dry_run.pack(side="left")
+        self.btn_run_all = ttk.Button(
             btns, text="Nhập THẬT vào MISA...", command=lambda: self._run_all(dry_run=False)
-        ).pack(side="left", padx=6)
-        ttk.Button(
+        )
+        self.btn_run_all.pack(side="left", padx=6)
+        self.btn_run_selected = ttk.Button(
             btns, text="Nhập THẬT — chỉ hóa đơn đang chọn",
             command=lambda: self._run_all(dry_run=False, only_selected=True),
+        )
+        self.btn_run_selected.pack(side="left")
+        self.btn_stop = ttk.Button(
+            btns, text="⏹ Dừng", command=self._request_stop, state="disabled",
+        )
+        self.btn_stop.pack(side="left", padx=(12, 0))
+        self._run_buttons = (self.btn_dry_run, self.btn_run_all, self.btn_run_selected)
+
+        btns2 = ttk.Frame(left)
+        btns2.pack(fill="x", pady=(0, 4))
+        ttk.Button(
+            btns2, text="Đặt lại (các) hóa đơn ĐANG CHỌN -> Sẵn sàng",
+            command=self._bulk_reset_selected,
         ).pack(side="left")
 
         # ---- Bên phải: chi tiết hóa đơn đang chọn ----
@@ -636,19 +661,31 @@ class App(tk.Tk):
         self._refresh_tree()
         self._log(f"Đã sửa tay mã hàng dòng {idx} -> {new_code} (hóa đơn {self.selected_row.invoice.so_hoa_don})")
 
+    def _try_reset_to_ready(self, row: "InvoiceRow") -> str:
+        """
+        Đặt 1 InvoiceRow về "san_sang" NẾU AN TOÀN — dùng chung cho nút đơn (panel chi
+        tiết), bấm đúp trên cột Trạng thái, và nút đặt lại HÀNG LOẠT nhiều hóa đơn đang
+        chọn. Hóa đơn đã "Đã cất" thật KHÔNG cho đặt lại (tránh nhập trùng vào sổ sách
+        thật). Trả về "ok" | "da_cat" | "warnings".
+        """
+        if row.status == "da_cat":
+            return "da_cat"
+        if row.invoice.warnings:
+            return "warnings"
+        row.status = "san_sang"
+        return "ok"
+
     def _reset_row_status(self):
         """
         Cho phép người dùng CHỦ ĐỘNG đặt lại trạng thái hóa đơn đang chọn về "Sẵn sàng"
         để bấm "Nhập THẬT..." chạy lại — dùng sau khi đã sửa tay mã hàng cho (các) dòng
-        bị "Cần duyệt tay", hoặc đơn giản muốn thử lại 1 hóa đơn từng bị dừng. Hóa đơn đã
-        "Đã cất" thật thì KHÔNG cho đặt lại bằng nút này (tránh bấm nhầm dẫn tới nhập
-        trùng vào sổ sách thật — muốn nhập lại hóa đơn đã Cất phải tự xoá dòng số hóa đơn
-        đó khỏi da_cat_log.json, đây là rào chắn có chủ đích).
+        bị "Cần duyệt tay", hoặc đơn giản muốn thử lại 1 hóa đơn từng bị dừng.
         """
         if not self.selected_row:
             messagebox.showinfo("Chưa chọn hóa đơn", "Chọn 1 hóa đơn trong hàng đợi trước.")
             return
-        if self.selected_row.status == "da_cat":
+        result = self._try_reset_to_ready(self.selected_row)
+        if result == "da_cat":
             messagebox.showwarning(
                 "Đã cất rồi",
                 "Hóa đơn này đã Cất thành công vào MISA thật — không cho đặt lại trạng "
@@ -657,17 +694,79 @@ class App(tk.Tk):
                 "ngay bên cạnh.",
             )
             return
-        if self.selected_row.invoice.warnings:
+        if result == "warnings":
             messagebox.showwarning(
                 "Còn cảnh báo đối chiếu số liệu",
                 f"Hóa đơn còn cảnh báo đối chiếu số liệu từ PDF: {self.selected_row.invoice.warnings}\n"
                 "Cần xử lý cảnh báo này trước (không liên quan tới mã hàng), không thể đặt lại Sẵn sàng.",
             )
             return
-        self.selected_row.status = "san_sang"
         self._render_detail(self.selected_row)
         self._refresh_tree()
         self._log(f"Đã đặt lại trạng thái hóa đơn {self.selected_row.invoice.so_hoa_don} -> Sẵn sàng (có thể chạy lại).")
+
+    def _on_tree_double_click(self, event):
+        """Bấm đúp vào Ô CỘT TRẠNG THÁI của 1 dòng trong hàng đợi -> đặt nhanh về Sẵn sàng."""
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        if self.tree.identify_column(event.x) != "#5":  # #5 = cột "trang_thai" (cột thứ 5)
+            return
+        row_id = self.tree.identify_row(event.y)
+        if not row_id:
+            return
+        row = self.rows[int(row_id)]
+        result = self._try_reset_to_ready(row)
+        if result == "da_cat":
+            messagebox.showwarning(
+                "Đã cất rồi",
+                f"Hóa đơn {row.invoice.so_hoa_don} đã Cất thành công — không đặt lại trạng "
+                "thái ở đây để tránh nhập trùng.",
+            )
+            return
+        if result == "warnings":
+            messagebox.showwarning(
+                "Còn cảnh báo đối chiếu số liệu",
+                f"Hóa đơn {row.invoice.so_hoa_don} còn cảnh báo đối chiếu số liệu từ PDF, "
+                "cần xử lý trước (không liên quan tới mã hàng).",
+            )
+            return
+        self._refresh_tree()
+        if self.selected_row is row:
+            self._render_detail(row)
+        self._log(f"Đã đặt lại trạng thái hóa đơn {row.invoice.so_hoa_don} -> Sẵn sàng (bấm đúp).")
+
+    def _bulk_reset_selected(self):
+        """
+        Đặt lại HÀNG LOẠT các hóa đơn ĐANG ĐƯỢC CHỌN (giữ Ctrl/Shift để chọn nhiều dòng
+        trong hàng đợi) về "Sẵn sàng" — dùng khi có nhiều chục/trăm hóa đơn "Cần duyệt
+        tay" cùng lúc, không cần mở panel chi tiết từng hóa đơn một để đặt lại tay.
+        """
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo(
+                "Chưa chọn hóa đơn",
+                "Chọn 1 hoặc nhiều hóa đơn trong hàng đợi trước (giữ Ctrl hoặc Shift để chọn nhiều dòng).",
+            )
+            return
+        ok_count = da_cat_count = warn_count = 0
+        for iid in sel:
+            row = self.rows[int(iid)]
+            result = self._try_reset_to_ready(row)
+            if result == "ok":
+                ok_count += 1
+            elif result == "da_cat":
+                da_cat_count += 1
+            else:
+                warn_count += 1
+        self._refresh_tree()
+        if self.selected_row is not None:
+            self._render_detail(self.selected_row)
+        msg = f"Đã đặt lại {ok_count} hóa đơn -> Sẵn sàng."
+        if da_cat_count:
+            msg += f" Bỏ qua {da_cat_count} hóa đơn đã Cất (không đặt lại được)."
+        if warn_count:
+            msg += f" Bỏ qua {warn_count} hóa đơn còn cảnh báo đối chiếu số liệu (cần xử lý riêng)."
+        self._log(msg)
 
     def _unmark_da_cat(self):
         """
@@ -735,8 +834,73 @@ class App(tk.Tk):
             if not confirm:
                 return
 
+        self.stop_requested.clear()
+        for b in self._run_buttons:
+            b.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
+        if not dry_run:
+            # Chỉ hiện nút Dừng NỔI khi chạy THẬT (lúc đó automation mới chiếm chuột/bàn
+            # phím và che khuất cửa sổ app) — dry-run không đụng MISA, cửa sổ app vẫn
+            # bấm bình thường nên không cần.
+            self._show_floating_stop()
+
         thread = threading.Thread(target=self._run_all_worker, args=(dry_run, target_rows), daemon=True)
         thread.start()
+
+    def _request_stop(self):
+        """
+        Yêu cầu dừng vòng lặp — CHỈ dừng ở điểm AN TOÀN (giữa 2 hóa đơn, xem chỗ kiểm
+        tra self.stop_requested trong _run_all_worker), KHÔNG ngắt ngang lúc đang gõ dở
+        1 hóa đơn — ngắt giữa chừng có thể để lại form dở dang/dữ liệu rác trên MISA.
+        Vì vậy hóa đơn ĐANG xử lý lúc bấm Dừng vẫn sẽ được hoàn tất trước khi dừng hẳn.
+        """
+        self.stop_requested.set()
+        self.btn_stop.configure(state="disabled")
+        if self.floating_stop_win is not None:
+            try:
+                self.floating_stop_win.btn.configure(state="disabled", text="Đang dừng...")
+            except Exception:
+                pass
+        self._log("Đã yêu cầu DỪNG — sẽ dừng sau khi xử lý xong hóa đơn đang chạy dở (không ngắt giữa chừng để tránh dữ liệu rác).")
+
+    def _show_floating_stop(self):
+        """
+        Cửa sổ nhỏ LUÔN NỔI TRÊN CÙNG (topmost), chỉ có nút Dừng — XÁC NHẬN THEO YÊU CẦU
+        NGƯỜI DÙNG (30/08/2026): lúc chạy thật, automation điều khiển chuột/bàn phím và
+        MISA chiếm focus/che khuất cửa sổ app chính, khiến nút "Dừng" trong app gần như
+        không bấm được. Cửa sổ nổi này luôn hiện ở góc màn hình, đè lên trên mọi cửa sổ
+        khác (kể cả MISA), để luôn bấm dừng được ngay cả khi đang chạy.
+        """
+        if self.floating_stop_win is not None:
+            return
+        win = tk.Toplevel(self)
+        win.overrideredirect(True)
+        win.attributes("-topmost", True)
+        win.configure(bg="#c0392b")
+        screen_w = win.winfo_screenwidth()
+        win.geometry(f"150x60+{screen_w - 170}+20")
+        btn = tk.Button(
+            win, text="⏹ DỪNG", font=("Segoe UI", 14, "bold"),
+            bg="#c0392b", fg="white", activebackground="#a5281b", activeforeground="white",
+            relief="flat", command=self._request_stop,
+        )
+        btn.pack(fill="both", expand=True, padx=4, pady=4)
+        win.btn = btn
+        self.floating_stop_win = win
+
+    def _hide_floating_stop(self):
+        if self.floating_stop_win is not None:
+            try:
+                self.floating_stop_win.destroy()
+            except Exception:
+                pass
+            self.floating_stop_win = None
+
+    def _on_run_finished(self):
+        for b in self._run_buttons:
+            b.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        self._hide_floating_stop()
 
     def _run_all_worker(self, dry_run: bool, target_rows: list | None = None):
         rows_to_run = target_rows if target_rows is not None else self.rows
@@ -747,6 +911,7 @@ class App(tk.Tk):
                 automation.ensure_ban_hang_list_open()
             except Exception as e:
                 self._log(f"LỖI kết nối/điều hướng MISA ({type(e).__name__}):\n" + traceback.format_exc())
+                self.after(0, self._on_run_finished)
                 return
 
         # ---- Từ 29/08/2026: quyết định mã hàng chuyển sang tra cứu TRỰC TIẾP trong
@@ -761,6 +926,9 @@ class App(tk.Tk):
             self._log(f"{skip_count} hóa đơn có cảnh báo đối chiếu số liệu -> sẽ bỏ qua, không tự nhập.")
 
         for row in rows_to_run:
+            if self.stop_requested.is_set():
+                self._log("Đã DỪNG theo yêu cầu — các hóa đơn còn lại trong hàng đợi chưa xử lý.")
+                break
             inv = row.invoice
             # An toàn khi CHẠY LẠI sau khi 1 batch bị dừng giữa chừng (VD lỗi ở hóa đơn
             # thứ N) — bỏ qua các hóa đơn ĐÃ Cất thành công ở lần chạy trước, tránh nhập
@@ -842,6 +1010,7 @@ class App(tk.Tk):
             self.after(0, self._refresh_tree)
 
         self._log(f"=== Hoàn tất ({'DRY-RUN' if dry_run else 'THẬT'}) ===")
+        self.after(0, self._on_run_finished)
 
 
 if __name__ == "__main__":
